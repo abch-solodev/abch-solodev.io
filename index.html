@@ -1339,6 +1339,11 @@
 
 <script>
 "use strict";
+// 全体を即時実行関数で囲み、t・STRINGS・currentLangなどをグローバルスコープに一切漏らさないようにする。
+// GameDistributionなどの広告SDK(Google Ad Manager, Improve Digital, Novatiq等)が
+// windowに同名の変数・関数(t など、広告系ライブラリでもよく使われがちな短い名前)を
+// 定義していると、グローバル変数同士が衝突して上書きされてしまうことがあるため。
+(function () {
 
 /* ==================================================
    0. 多言語対応(i18n)
@@ -4986,6 +4991,8 @@ document.addEventListener("click", (e) => {
 
 applyStaticTranslations();
 showScreen("homeScreen");
+
+})();
 </script>
 </body>
 </html>
