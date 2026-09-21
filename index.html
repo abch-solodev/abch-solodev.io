@@ -753,6 +753,18 @@
     padding: 3px 0;
   }
 
+  /* GameDistributionのバナー広告(Display Ads)用の枠。読み込めない時は場所を取らないよう非表示にする */
+  .gd-banner-container {
+    width: 300px;
+    height: 250px;
+    margin: 14px auto 0;
+    display: none;
+  }
+  .gd-banner-container.has-ad { display: block; }
+  @media (max-width: 480px) {
+    .gd-banner-container { width: 100%; max-width: 300px; height: 250px; }
+  }
+
   .panel {
     width: min(920px, 96vw);
     background: rgba(0,0,0,0.25);
@@ -976,53 +988,16 @@
   }
 </style>
 
-<!-- ============ GameDistribution SDK ============ -->
-<!-- 注意: "gameId" は必ずご自身のGameDistributionデベロッパー画面で取得したものに差し替えてください。
-     このプレースホルダーのままだと審査には通りません。 -->
+<!-- ============ 広告SDKなし ============ -->
+<!-- GameDistributionへの掲載審査が通らなかったため、SDK自体を取り外した。
+     showGdAd/showGdBannerAdは、呼び出し側のコードを変えずに済むよう、
+     常に「広告なし」で即完了するスタブとして用意しておく。 -->
 <script>
-  window["GD_OPTIONS"] = {
-    "gameId": "c9de1a146fcc4fb1acaca8fdf8de69a2",
-    "onEvent": function (event) {
-      switch (event.name) {
-        case "SDK_GAME_START":
-          // 広告が終わり、ゲームを再開してよいタイミング
-          window.GD_AD_ACTIVE = false;
-          break;
-        case "SDK_GAME_PAUSE":
-          // 広告を表示している間、ゲーム側は一時停止扱いにする
-          window.GD_AD_ACTIVE = true;
-          break;
-        case "SDK_READY":
-          window.GD_SDK_READY = true;
-          break;
-        case "SDK_ERROR":
-          console.warn("GameDistribution SDK error:", event);
-          break;
-      }
-    },
-  };
-  (function (d, s, id) {
-    var js, fjs = d.getElementsByTagName(s)[0];
-    if (d.getElementById(id)) return;
-    js = d.createElement(s);
-    js.id = id;
-    js.src = "https://html5.api.gamedistribution.com/main.min.js";
-    fjs.parentNode.insertBefore(js, fjs);
-  })(document, "script", "gamedistribution-jssdk");
-
-  // SDKが読み込めない/広告在庫がない場合でもゲーム進行を止めないための共通ヘルパー。
-  // 常にresolveするPromiseを返すので、呼び出し側は .then(startOrContinue) を1回書くだけでよい。
   function showGdAd() {
-    return new Promise((resolve) => {
-      if (typeof gdsdk === "undefined" || typeof gdsdk.showAd === "undefined") {
-        resolve();
-        return;
-      }
-      gdsdk
-        .showAd()
-        .then(() => resolve())
-        .catch(() => resolve());
-    });
+    return Promise.resolve();
+  }
+  function showGdBannerAd(_containerId) {
+    // 広告SDKがないので常に何もしない(バナー枠も表示しない)
   }
 </script>
 </head>
@@ -1091,7 +1066,7 @@
       <button id="startMatchButton" data-i18n="persona_start">この対戦相手で開始</button>
       <button class="secondary-button" id="personaBackButton" data-i18n="back_button">戻る</button>
     </div>
-    <div class="debug-panel">
+    <div class="debug-panel" style="display:none;">
       <div class="debug-panel-title" data-i18n="debug_title">🛠 デバッグ用(手札を偏らせて開始)</div>
       <div style="text-align:center;">
         <button class="secondary-button debug-button" id="debugJurokuButton" data-i18n="debug_juroku">十六テスト(あなたが関係・絵札独占寄り)</button>
@@ -1308,6 +1283,7 @@
     <div class="scoreboard-players" id="scoreboardPlayers"></div>
     <div class="scoreboard-history-title" data-i18n="scoreboard_history_title">セット履歴</div>
     <div class="scoreboard-history" id="scoreboardHistory" data-i18n="scoreboard_no_history">まだありません。</div>
+    <div class="gd-banner-container" id="gdBannerContainer"></div>
   </div>
   </div>
 
@@ -4219,7 +4195,13 @@ function goToNextSet() {
   if (window.SCORE_ATTACK_MODE) updateScoreAttackChip();
   // セットの合間(自然な区切り)に広告を表示する。デバッグ・お試しプレイ中は出さない。
   if (!window.TUTORIAL_PRACTICE_MODE && !window.DEBUG_HAND_PRESET) {
+    const adStartedAt = Date.now();
     showGdAd().then(() => {
+      // タイムアタック中は、広告を見ていた時間をタイマーの計測から除外する
+      // (timeAttackStartTimeを広告の分だけ後ろにずらすことで、経過時間の計算上「広告中は進んでいない」ことにする)
+      if (window.TIME_ATTACK_MODE && timeAttackStartTime !== null) {
+        timeAttackStartTime += Date.now() - adStartedAt;
+      }
       startNewSet();
     });
   } else {
@@ -4265,11 +4247,13 @@ function startTimeAttack() {
   document.getElementById("timeAttackResultPanel").style.display = "none";
 
   showScreen("gameScreen");
-  startNewMatch();
-
-  timeAttackStartTime = Date.now();
-  if (timeAttackDisplayInterval) clearInterval(timeAttackDisplayInterval);
-  timeAttackDisplayInterval = setInterval(updateTimeAttackDisplay, 100);
+  showGdAd().then(() => {
+    startNewMatch();
+    // タイマーは広告が終わった後から数える(広告視聴時間を計測に含めないため)
+    timeAttackStartTime = Date.now();
+    if (timeAttackDisplayInterval) clearInterval(timeAttackDisplayInterval);
+    timeAttackDisplayInterval = setInterval(updateTimeAttackDisplay, 100);
+  });
 }
 
 function finishTimeAttack() {
@@ -4370,8 +4354,10 @@ function startDailyChallenge() {
   document.getElementById("dailyChallengeResultPanel").style.display = "none";
 
   showScreen("gameScreen");
-  startNewMatch();
-  updateDailyChallengeChip();
+  showGdAd().then(() => {
+    startNewMatch();
+    updateDailyChallengeChip();
+  });
 }
 
 function updateDailyChallengeChip() {
@@ -4465,8 +4451,10 @@ function startScoreAttack() {
   document.getElementById("scoreAttackResultPanel").style.display = "none";
 
   showScreen("gameScreen");
-  startNewMatch();
-  updateScoreAttackChip();
+  showGdAd().then(() => {
+    startNewMatch();
+    updateScoreAttackChip();
+  });
 }
 
 function updateScoreAttackChip() {
@@ -4610,6 +4598,7 @@ function showScreen(screenId) {
   if (screenId === "gameScreen") {
     startBGM();
     updateCurrentModeLabel();
+    showGdBannerAd("gdBannerContainer"); // 画面を止めないバナー広告(表示中はゲームを進められる)
   } else {
     stopBGM();
   }
@@ -4956,12 +4945,18 @@ document.getElementById("scoreAttackHomeButton").addEventListener("click", () =>
 document.getElementById("langSelect").addEventListener("change", (e) => {
   currentLang = e.target.value;
   applyStaticTranslations();
-  // 今表示中の動的なコンテンツ(ペルソナ選択・チュートリアル)も言語切替に合わせて再描画する
+  // 今表示中の動的なコンテンツ(ペルソナ選択・チュートリアル・スコアボード)も言語切替に合わせて再描画する
   if (document.getElementById("personaSelectScreen").style.display !== "none") {
     renderPersonaSelectGrid();
   }
   if (document.getElementById("tutorialScreen").style.display !== "none") {
     renderTutorialStep();
+  }
+  if (match) {
+    renderScoreboard();
+  }
+  if (state) {
+    render();
   }
 });
 
